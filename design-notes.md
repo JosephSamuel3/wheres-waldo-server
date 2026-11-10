@@ -1,101 +1,229 @@
-Where's Waldo? — Backend Design Notes
-Status: Planning
-Last updated: 2026-11-02
+Where's Waldo? --- Backend Design Plan
+Last updated: November 9, 2026
+Design session documented: November 5, 2026
 
-This document records the backend decisions made so far. Items marked Pending still need to be discussed and agreed on. The goal is to keep the backend focused on the project's MVP rather than introduce unnecessary complexity.
-1. Project context
-The frontend MVP is complete enough to:
-- Select a difficulty and start a game.
-- Find targets by clicking the game image.
-- Track found targets and elapsed time.
-- Finish the game when all targets have been found.
-- Return to the main menu, including using the exit option before finishing.
-The backend will add persistent score submission and leaderboards, with basic server-side validation of game sessions.
-2. Planned technology
-- Runtime: Node.js
-- Framework: Express
-- Language: TypeScript
-- Database: PostgreSQL
-- ORM: Prisma
-3. Product scope and decisions
-Area	Current decision
-Player accounts	No account system required for the MVP.
-Player names	Players may enter a name when they finish if they want to submit a leaderboard score.
-Score submission	Optional. Players should not be forced to submit a score.
-Score storage	Store submitted scores.
-Ranking	A lower completion time ranks above a longer completion time.
-Difficulty leaderboards	Keep Easy, Medium, and Hard scores in separate tables for straightforwardness and flexibility.
-Player data	Use a dedicated players table to keep the design flexible if requirements change.
-Payload validation	The server should reject invalid request data.
-Anti-cheat	Basic server-side validation is in scope; comprehensive anti-cheat protection is not an MVP goal.
+This document records the backend architecture and decisions, It is the reference point for
+the next implementation-planning steps.
 
+1. Design goals
+- Keep the backend straightforward and avoid unnecessary tables.
+- Make the game session the source of truth for difficulty, timing,
+  and completion state.
+- Support separate Easy, Medium, and Hard leaderboards without
+  maintaining separate leaderboard tables.
+- Keep the design flexible enough to accommodate future changes.
+- Enforce important rules on the server rather than trusting
+  client-submitted data.
 
-Leaderboard size: Not yet confirmed in this planning record. Confirm the number of entries to display per difficulty before implementing the leaderboard query.
-4. Game-session validation
-The backend should not blindly trust a completion time or a list of targets supplied by the frontend. It should maintain the authoritative game-session state.
-Proposed session flow
-1. Start a game: The frontend asks the backend to create a game session and supplies the selected difficulty.
-2. Create the session: The backend validates the difficulty, creates a session, and records the server-side start timestamp.
-3. Record target discoveries: Each time the player finds a character, the frontend submits that target to the backend for validation.
-4. Validate progress: The backend checks that the session is valid and active, and that the target belongs to that session's difficulty.
-5. Complete the game: Once every required target has been recorded, the session is eligible to be completed.
-6. Calculate the time: The backend uses its own recorded timestamps to calculate the official completion time.
-7. Offer score submission: The frontend can offer the player the option to submit their name and score to the leaderboard.
-This is a proposed high-level flow. The exact API routes, request/response formats, and session data model are still pending.
-Target validation approach — DECIDED
-Validate each target individually (Option A).
+2. Core data model
+The design uses four main models:
+1. GameSession
+2. FoundTarget
+3. Player
+4. LeaderboardEntry
 
-The frontend sends a request to the backend whenever a player finds a character. The backend validates and records each discovery instead of trusting the frontend to submit a complete list of found targets only at the end.
+2.1 GameSession
+Represents one playthrough of a game.
 
-The backend should check at least:
-- The game session exists and is active.
-- The target ID is valid.
-- The target belongs to the selected difficulty.
-- The target has not already been recorded as found in that session.
-Duplicate target submissions — DECIDED
-Handle duplicates gracefully (Option B).
+Proposed fields:
+  Field                               Purpose
+  id                                UUID identifying the game session
 
-If the player submits a target that has already been found:
-- Do not record it a second time.
-- Do not interrupt or invalidate the game.
-- Return the current game progress so the frontend can keep its state synchronized.
-- The frontend may display or retain a “Found” indication.
-Example response shape (illustrative only; not a finalized API contract):
-{
-  "message": "Target already found",
-  "foundTargets": ["waldo", "wenda"]
-}
-Invalid submissions and session states
-The server should reject invalid data and requests that are not allowed for the session. The exact HTTP status codes and error response format have not yet been finalized.
+  difficulty                        Difficulty played: EASY,
+MEDIUM, or HARD
 
-Potential cases to handle:
-- Unknown or invalid session ID.
-- Unknown target ID.
-- Target not associated with the session's difficulty.
-- Attempt to submit a target after the session has been completed.
-- Attempt to complete a session before all required targets have been found.
-- Malformed or otherwise invalid request payload.
-5. Database direction
-The current design direction includes:
-- A dedicated players table.
-- Separate score tables for Easy, Medium, and Hard.
-The intention is to keep the schema simple and clear while leaving room for future changes.
+  status                            Current state of the session, such
+as in progress, completed, or
+abandoned
 
-Still to design: exact columns, primary and foreign keys, Prisma relations, how game sessions and found targets are represented, and how submitted scores relate to players and sessions.
-6. Decisions made in the latest planning session
-1. Validate target discoveries individually through the backend.
-2. Treat duplicate target submissions as harmless: return current progress without recording the target again or disrupting gameplay.
-7. Open questions / next planning tasks
-Suggested order for the next sessions:
-1. Finish the game-session lifecycle: define session states, when a session can be completed, and what happens if a player exits or abandons a game.
-2. Define the data model: identify the tables, fields, constraints, and relationships.
-3. Plan the API: define endpoints, request bodies, response bodies, and error handling.
-4. Define score submission: clarify how an optional player name and completed session become a stored leaderboard entry.
-5. Define leaderboard behaviour: confirm the number of displayed scores, tie handling, and sorting.
-6. Implement the backend MVP: build incrementally, test each feature, and integrate it with the existing React frontend.
-Working principles
-- Keep the MVP simple and avoid building features that are not currently needed.
-- Validate untrusted input on the server.
-- Treat the backend as the source of truth for session progress and official completion time.
-- Keep optional leaderboard participation optional.
-- Make design decisions explicit before implementing them.
+  startedAt                         Server-recorded session start
+timestamp
+
+  completedAt                       Completion timestamp when the
+session is completed
+durationMs                        Final elapsed duration in
+milliseconds, recorded for
+completed sessions
+
+  abandonedAt                       Completion timestamp when the
+session is abandoned
+durationMs                        Final elapsed duration in
+milliseconds, recorded for
+completed sessions
+
+Responsibilities and decisions
+- GameSession owns the difficulty. The leaderboard does not need a
+  separate difficulty field because it can obtain difficulty through
+  its related session.
+- It also owns the session's status and timing information.
+- An abandoned session is represented by its status. A separate
+  abandonedAt field was considered but rejected as redundant for the
+  current design.
+- The exact handling of completedAt and durationMs should be
+  finalized when implementing the session lifecycle. They are shown
+  here as proposed fields from the design discussion.
+
+2.2 FoundTarget
+Represents a target successfully found during a game session.
+
+Proposed fields:
+  Field                               Purpose
+  id                                UUID identifying the found-target
+record
+
+  sessionId                         UUID of the related game session
+
+  targetId                          String identifier for the target
+foundAt                           Timestamp recorded by the server
+when the target is found
+
+Constraints and decisions
+- Each successfully found target gets its own row.
+- A target can only be recorded once per session.
+- Enforce a composite unique constraint on (sessionId, targetId).
+- foundAt is server-generated; the client should not be trusted to
+  provide the authoritative discovery time.
+- Valid target IDs are defined by backend configuration, allowing the
+  server to validate that a submitted target belongs to the selected
+  game/difficulty.
+
+2.3 Player
+Represents the name associated with a leaderboard submission.
+
+Proposed field:
+
+  Field    Purpose
+  id     UUID identifying the player record
+name   Name displayed on the leaderboard
+
+A player record is created/associated when someone chooses to submit a
+completed game's result. Players are not required to create an account
+as part of the current MVP.
+
+2.4 LeaderboardEntry
+Represents a player's submitted result for a completed game session.
+
+Proposed fields:
+  Field                               Purpose
+  id                                UUID identifying this individual
+leaderboard entry
+
+  playerId                          Reference to the associated player
+
+  sessionId                         Reference to the completed game
+session
+submittedAt                       Server-generated timestamp
+indicating when the result was
+submitted
+
+Constraints and decisions
+- Use one LeaderboardEntry table for all difficulties. Do not create
+  a separate table for Easy, Medium, and Hard.
+- Each entry has its own UUID.
+- submittedAt is included and generated by the server.
+- A session may have zero or one leaderboard submission. A player may
+  choose not to submit a score.
+- Enforce uniqueness on sessionId so the same game session cannot be
+  submitted more than once.
+- The entry obtains its difficulty and completion duration through its
+  related GameSession; these values do not need to be duplicated in
+  the entry.
+- The uniqueness policy for playerId should be kept distinct from
+  the confirmed one-submission-per-session rule and finalized if it
+  becomes necessary. The current design does not require a player to
+  be globally unique by name.
+
+3. Relationships
+- One GameSession can have many FoundTarget records.
+- One GameSession can have zero or one LeaderboardEntry.
+- One Player can be associated with leaderboard entries.
+- Each LeaderboardEntry belongs to one Player and one
+  GameSession.
+
+Conceptually:
+GameSession
+  ├── FoundTarget (many)
+  └── LeaderboardEntry (zero or one)
+          └── Player
+
+4. Leaderboard behavior
+There will be a single leaderboard query/model rather than one table per
+difficulty.
+
+To retrieve a leaderboard:
+1. Select leaderboard entries whose related game session has the
+   requested difficulty.
+2. Consider only sessions with a completed status.
+3. Sort by durationMs in ascending order.
+4. Return the associated player name and relevant score/session
+   information.
+5. Apply the leaderboard limit (the frontend MVP currently displays the
+   top three scores per difficulty).
+Ranking rule: shorter completion time is better, so the lowest
+durationMs ranks first.
+
+This approach keeps the data model normalized and avoids duplicating
+difficulty or duration in a separate score table.
+5. Submission and gameplay rules
+- Players are prompted for a name after completing a game only if they
+  choose to appear on the leaderboard.
+- Leaderboard submission is optional; completing a game does not force
+  a submission prompt.
+- A completed session can be submitted zero or one times.
+- The server validates incoming data, including whether the session is
+  eligible for submission and whether target IDs are valid.
+- Duplicate target discoveries should be rejected or safely prevented
+  by the (sessionId, targetId) unique constraint.
+- The server is authoritative for timestamps such as foundAt and
+  submittedAt.
+
+6. Decisions made and alternatives rejected
+  Topic                               Decision
+  Leaderboard storage                 One shared LeaderboardEntry table
+
+  Difficulty source                   Stored on GameSession, queried
+through the relation
+
+  Ranking                             Sort completion duration ascending
+
+  Entry identifier                    Every leaderboard entry has its own
+UUID
+
+  Submission timestamp                Include server-generated
+submittedAt
+
+  Duplicate score submissions         At most one leaderboard entry per
+game session
+
+  Optional participation              A completed session may have no
+leaderboard entry
+
+  Found targets                       One record per target found in a
+session
+
+  Duplicate target prevention         Unique (sessionId, targetId)
+Abandoned sessions                  Use status; no separate
+abandonedAt field for now
+7. Current scope and implementation notes
+This is a design plan, not a finalized database migration or API
+contract. Field types, relation names, indexes, exact enum values, and
+endpoint details can be settled during implementation.
+
+Keep the current project scope focused on the backend MVP. Avoid adding
+account authentication or unrelated features unless they become
+necessary for the agreed gameplay and leaderboard flow.
+8. Open implementation questions
+These are implementation details to resolve as work proceeds, not
+reasons to change the agreed architecture:
+- What exact session status enum values and transitions should be
+  supported?
+- At what point should the server set completedAt and
+  calculate/store durationMs?
+- What request/response shapes should the session, target-discovery,
+  and leaderboard-submission endpoints use?
+- How should the server verify that all required targets have been
+  found before marking a session complete?
+- What validation and error responses should be used for invalid,
+  incomplete, or already-submitted sessions?
+- Should any additional uniqueness rule be applied to Player
+  records, beyond the confirmed one-entry-per-session rule?
