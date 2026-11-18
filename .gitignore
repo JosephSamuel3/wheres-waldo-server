@@ -2,3 +2,10 @@ node_modules
 .env
 MVP.md
 TASKS.md
+/generated/prisma
+/dist
+/src/generated/prisma
+.claude/
+.windsurf/
+.agents/
+skills-lock.json

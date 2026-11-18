@@ -227,3 +227,4 @@ reasons to change the agreed architecture:
   incomplete, or already-submitted sessions?
 - Should any additional uniqueness rule be applied to Player
   records, beyond the confirmed one-entry-per-session rule?
+

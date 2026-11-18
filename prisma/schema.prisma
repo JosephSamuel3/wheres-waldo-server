@@ -1,0 +1,56 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model GameSession {
+  id           String        @id @default(uuid()) @db.Uuid
+  difficulty   Difficulty
+  durationMs   Int?
+  status       GameStatus    @default(inProgress)
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+  completedAt  DateTime?
+  abandonedAt  DateTime?
+  foundTargets FoundTarget[]
+
+  leaderboardEntry LeaderboardEntry?
+}
+
+model FoundTarget {
+  id            String   @id @default(uuid()) @db.Uuid
+  gameSessionId String   @db.Uuid
+  targetId      String
+  foundAt       DateTime @default(now())
+
+  gameSession GameSession @relation(fields: [gameSessionId], references: [id], onDelete: Cascade)
+
+  @@unique([gameSessionId, targetId])
+}
+
+model LeaderboardEntry {
+  id            String   @id @default(uuid()) @db.Uuid
+  playerName    String   @db.VarChar(30)
+  gameSessionId String   @db.Uuid
+  submittedAt   DateTime @default(now())
+
+  gameSession GameSession @relation(fields: [gameSessionId], references: [id], onDelete: Restrict)
+
+  @@unique([gameSessionId])
+}
+
+enum Difficulty {
+  easy
+  medium
+  hard
+}
+
+enum GameStatus {
+  inProgress
+  abandoned
+  completed
+}
